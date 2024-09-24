@@ -1,134 +1,101 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+// TourWrapper.tsx
+import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import Joyride, {
+  ACTIONS,
+  STATUS,
+  EVENTS,
+  Step,
+  CallBackProps,
+} from "react-joyride";
+import { useOnboarding } from "./onboardingChecklist";
 
-// Remember to rename these classes and interfaces!
+const tourConfig: { [key: number]: Step[] } = {
+  1: [
+    {
+      target: ".step1",
+      content:
+        "To send a Test message start creating a survey by clicking this button",
+      disableBeacon: true,
+    },
+    // Additional steps can be added here
+  ],
+  2: [
+    {
+      target: ".element-on-page-2",
+      content: "This is the first step on page 2",
+    },
+  ],
+};
 
-interface MyPluginSettings {
-	mySetting: string;
-}
+type TourState = {
+  run: boolean;
+  stepIndex: number;
+  steps: Step[];
+};
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
-}
+export default function TourWrapper(): JSX.Element {
+  const { toggleTask, selectedTask } = useOnboarding();
+  const [tourState, setTourState] = useState<TourState>({
+    run: false,
+    stepIndex: 0,
+    steps: [],
+  });
+  const navigate = useNavigate();
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+  useEffect(() => {
+    if (selectedTask !== 0) {
+      setTourState((prevState) => ({
+        ...prevState,
+        run: true,
+        steps: tourConfig[selectedTask],
+      }));
+      console.log(tourConfig[selectedTask], selectedTask);
+    }
+  }, [selectedTask]);
 
-	async onload() {
-		await this.loadSettings();
+  useEffect(() => {
+    const savedState = localStorage.getItem("tourState");
+    if (savedState) {
+      setTourState(JSON.parse(savedState) as TourState);
+    }
+  }, []);
 
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
+  const handleJoyrideCallback = (data: CallBackProps) => {
+    const { action, index, step, type, status } = data;
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
+    if (type === EVENTS.STEP_AFTER || type === EVENTS.TOUR_END) {
+      const newState = {
+        ...tourState,
+        stepIndex: index + (action === ACTIONS.NEXT ? 1 : -1),
+      };
+      setTourState(newState);
+      // localStorage.setItem("tourState", JSON.stringify(newState));
+    }
 
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
+    console.log(step.target);
+    console.log(type);
+    if (step.target === ".step2" && type === EVENTS.STEP_AFTER) {
+      console.log("success");
+      // navigate("/surveyTemplateDashboard");
+    } else if (action === ACTIONS.CLOSE) {
+      setTourState({ ...tourState, run: false });
+    }
+    if ([STATUS.FINISHED, STATUS.SKIPPED].includes(status)) {
+      toggleTask(selectedTask);
+      // setTourState({ run: false, stepIndex: 0, steps: [] });
+    }
+  };
 
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-			}
-		});
-
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
-	}
-
-	onunload() {
-
-	}
-
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-	}
-
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
-}
-
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
-
-	onOpen() {
-		const {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
-
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
-}
-
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
-
-	constructor(app: App, plugin: MyPlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
-	}
-
-	display(): void {
-		const {containerEl} = this;
-
-		containerEl.empty();
-
-		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
-				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
-					await this.plugin.saveSettings();
-				}));
-	}
+  return (
+    <Joyride
+      run={tourState.run}
+      stepIndex={tourState.stepIndex}
+      steps={tourState.steps}
+      callback={handleJoyrideCallback}
+      continuous
+      showSkipButton
+      showProgress
+    />
+  );
 }
