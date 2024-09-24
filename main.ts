@@ -1,101 +1,62 @@
-// TourWrapper.tsx
-import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import Joyride, {
-  ACTIONS,
-  STATUS,
-  EVENTS,
-  Step,
-  CallBackProps,
-} from "react-joyride";
-import { useOnboarding } from "./onboardingChecklist";
+import { Plugin, TFile, MarkdownView } from 'obsidian';
+import * as Automerge from 'automerge';
 
-const tourConfig: { [key: number]: Step[] } = {
-  1: [
-    {
-      target: ".step1",
-      content:
-        "To send a Test message start creating a survey by clicking this button",
-      disableBeacon: true,
-    },
-    // Additional steps can be added here
-  ],
-  2: [
-    {
-      target: ".element-on-page-2",
-      content: "This is the first step on page 2",
-    },
-  ],
-};
+export default class MyAutomergePlugin extends Plugin {
+  private doc: Automerge.Doc<{ text: Automerge.Text }>;
+  private socket: WebSocket;
 
-type TourState = {
-  run: boolean;
-  stepIndex: number;
-  steps: Step[];
-};
+  async onload() {
+    this.doc = Automerge.from({ text: new Automerge.Text() });
+    this.setupWebSocket();
+    this.registerEvents();
+  }
 
-export default function TourWrapper(): JSX.Element {
-  const { toggleTask, selectedTask } = useOnboarding();
-  const [tourState, setTourState] = useState<TourState>({
-    run: false,
-    stepIndex: 0,
-    steps: [],
-  });
-  const navigate = useNavigate();
+  setupWebSocket() {
+    this.socket = new WebSocket('wss://your-websocket-server');
 
-  useEffect(() => {
-    if (selectedTask !== 0) {
-      setTourState((prevState) => ({
-        ...prevState,
-        run: true,
-        steps: tourConfig[selectedTask],
-      }));
-      console.log(tourConfig[selectedTask], selectedTask);
+    this.socket.onmessage = (event) => {
+      const remoteChange = new Uint8Array(event.data);
+      const [newDoc] = Automerge.applyChanges(this.doc, [remoteChange]);
+      this.doc = newDoc;
+      this.updateEditorContent(this.doc.text.toString());
+    };
+  }
+
+  registerEvents() {
+    this.registerEvent(
+      this.app.workspace.on('file-open', (file: TFile) => {
+        if (file) this.loadNoteToAutomerge(file);
+      })
+    );
+
+    this.registerEvent(
+      this.app.workspace.on('editor-change', (editor) => {
+        const content = editor.getValue();
+        this.doc = Automerge.change(this.doc, (d) => {
+          d.text.replace(0, d.text.length, ...content);
+        });
+        this.sendChanges(Automerge.getLastLocalChange(this.doc));
+      })
+    );
+  }
+
+  async loadNoteToAutomerge(file: TFile) {
+    const content = await this.app.vault.read(file);
+    this.doc = Automerge.from({ text: new Automerge.Text(content) });
+  }
+
+  sendChanges(change: Uint8Array) {
+    this.socket.send(change);
+  }
+
+  updateEditorContent(content: string) {
+    const editor = this.app.workspace.getActiveViewOfType(MarkdownView)?.editor;
+    if (editor && editor.getValue() !== content) {
+      editor.setValue(content);
     }
-  }, [selectedTask]);
+  }
 
-  useEffect(() => {
-    const savedState = localStorage.getItem("tourState");
-    if (savedState) {
-      setTourState(JSON.parse(savedState) as TourState);
-    }
-  }, []);
-
-  const handleJoyrideCallback = (data: CallBackProps) => {
-    const { action, index, step, type, status } = data;
-
-    if (type === EVENTS.STEP_AFTER || type === EVENTS.TOUR_END) {
-      const newState = {
-        ...tourState,
-        stepIndex: index + (action === ACTIONS.NEXT ? 1 : -1),
-      };
-      setTourState(newState);
-      // localStorage.setItem("tourState", JSON.stringify(newState));
-    }
-
-    console.log(step.target);
-    console.log(type);
-    if (step.target === ".step2" && type === EVENTS.STEP_AFTER) {
-      console.log("success");
-      // navigate("/surveyTemplateDashboard");
-    } else if (action === ACTIONS.CLOSE) {
-      setTourState({ ...tourState, run: false });
-    }
-    if ([STATUS.FINISHED, STATUS.SKIPPED].includes(status)) {
-      toggleTask(selectedTask);
-      // setTourState({ run: false, stepIndex: 0, steps: [] });
-    }
-  };
-
-  return (
-    <Joyride
-      run={tourState.run}
-      stepIndex={tourState.stepIndex}
-      steps={tourState.steps}
-      callback={handleJoyrideCallback}
-      continuous
-      showSkipButton
-      showProgress
-    />
-  );
+  onunload() {
+    this.socket.close();
+  }
 }
